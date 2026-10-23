@@ -1,5 +1,4 @@
 import os
-from datetime import date, timedelta
 
 import pandas as pd
 import plotly.express as px
@@ -45,9 +44,8 @@ def load_data(limit: int, days: int) -> pd.DataFrame:
         ),
     }
     # Optional date filter limits the records to the selected recent window.
-    if days > 0:
-        cutoff = (date.today() - timedelta(days=days)).isoformat()
-        params["$where"] = f"crash_date >= '{cutoff}T00:00:00.000'"
+   # Date filtering is applied after retrieving and parsing the latest sample.
+# This avoids relying on today's date when the source data is delayed.
     response = requests.get(API_URL, params=params, timeout=90)
     response.raise_for_status()
     data = response.json()
@@ -84,7 +82,14 @@ def load_data(limit: int, days: int) -> pd.DataFrame:
             df[col] = 0
         df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0)
     df = df.dropna(subset=["crash_date"]).copy()
-    return df
+
+# Filter relative to the latest date in the available sample
+if days > 0 and not df.empty:
+    latest_date = df["crash_date"].max()
+    cutoff = latest_date - pd.Timedelta(days=days)
+    df = df[df["crash_date"] >= cutoff].copy()
+
+return df
 
 st.sidebar.title("🚦 Traffic Analytics")
 st.sidebar.caption("Big Data project dashboard")
