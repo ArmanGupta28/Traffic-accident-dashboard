@@ -27,9 +27,10 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
+
 @st.cache_data(ttl=3600, show_spinner=False)
 def load_data(limit: int, days: int) -> pd.DataFrame:
-    """Fetch a recent sample from NYC Open Data."""
+    """Fetch accident records from NYC Open Data."""
     params = {
         "$limit": limit,
         "$order": "crash_date DESC",
@@ -43,53 +44,95 @@ def load_data(limit: int, days: int) -> pd.DataFrame:
             "vehicle_type_code1,collision_id"
         ),
     }
-    # Optional date filter limits the records to the selected recent window.
-   # Date filtering is applied after retrieving and parsing the latest sample.
-# This avoids relying on today's date when the source data is delayed.
+
     response = requests.get(API_URL, params=params, timeout=90)
     response.raise_for_status()
     data = response.json()
     df = pd.DataFrame(data)
+
     if df.empty:
         return df
 
     df.columns = [str(c).strip().lower() for c in df.columns]
-    for col in [
-        "number_of_persons_injured", "number_of_persons_killed",
-        "number_of_pedestrians_injured", "number_of_pedestrians_killed",
-        "number_of_cyclist_injured", "number_of_cyclist_killed",
-        "number_of_motorist_injured", "number_of_motorist_killed",
-        "latitude", "longitude",
-    ]:
+
+    numeric_cols = [
+        "number_of_persons_injured",
+        "number_of_persons_killed",
+        "number_of_pedestrians_injured",
+        "number_of_pedestrians_killed",
+        "number_of_cyclist_injured",
+        "number_of_cyclist_killed",
+        "number_of_motorist_injured",
+        "number_of_motorist_killed",
+        "latitude",
+        "longitude",
+    ]
+
+    for col in numeric_cols:
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors="coerce")
 
-    df["crash_date"] = pd.to_datetime(df.get("crash_date"), errors="coerce")
-    df["crash_time"] = df.get("crash_time", pd.Series(dtype=str)).astype("string").str.strip()
-    df["hour"] = pd.to_numeric(df["crash_time"].str.extract(r"^(\d{1,2}):")[0], errors="coerce")
-    df["borough"] = df.get("borough", pd.Series(dtype=str)).fillna("UNKNOWN").astype(str).str.upper().str.strip()
-    df["contributing_factor_vehicle_1"] = (
-        df.get("contributing_factor_vehicle_1", pd.Series(dtype=str))
-        .fillna("UNSPECIFIED").astype(str).str.strip()
+    df["crash_date"] = pd.to_datetime(
+        df["crash_date"], errors="coerce"
     )
-    for col in [
-        "number_of_persons_injured", "number_of_persons_killed",
-        "number_of_pedestrians_injured", "number_of_pedestrians_killed",
-        "number_of_cyclist_injured", "number_of_cyclist_killed",
-        "number_of_motorist_injured", "number_of_motorist_killed",
-    ]:
+
+    df["crash_time"] = (
+        df.get("crash_time", pd.Series(index=df.index, dtype="string"))
+        .astype("string")
+        .str.strip()
+    )
+
+    df["hour"] = pd.to_numeric(
+        df["crash_time"].str.extract(r"^(\d{1,2}):")[0],
+        errors="coerce",
+    )
+
+    df["borough"] = (
+        df.get("borough", pd.Series(index=df.index, dtype="string"))
+        .fillna("UNKNOWN")
+        .astype(str)
+        .str.upper()
+        .str.strip()
+    )
+
+    df["contributing_factor_vehicle_1"] = (
+        df.get(
+            "contributing_factor_vehicle_1",
+            pd.Series(index=df.index, dtype="string"),
+        )
+        .fillna("UNSPECIFIED")
+        .astype(str)
+        .str.strip()
+    )
+
+    count_cols = [
+        "number_of_persons_injured",
+        "number_of_persons_killed",
+        "number_of_pedestrians_injured",
+        "number_of_pedestrians_killed",
+        "number_of_cyclist_injured",
+        "number_of_cyclist_killed",
+        "number_of_motorist_injured",
+        "number_of_motorist_killed",
+    ]
+
+    for col in count_cols:
         if col not in df.columns:
             df[col] = 0
-        df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0)
+        df[col] = pd.to_numeric(
+            df[col], errors="coerce"
+        ).fillna(0)
+
     df = df.dropna(subset=["crash_date"]).copy()
 
-# Filter relative to the latest date in the available sample
-if days > 0 and not df.empty:
-    latest_date = df["crash_date"].max()
-    cutoff = latest_date - pd.Timedelta(days=days)
-    df = df[df["crash_date"] >= cutoff].copy()
+    # Filter relative to the latest date in the retrieved sample.
+    if days > 0 and not df.empty:
+        latest_date = df["crash_date"].max()
+        cutoff = latest_date - pd.Timedelta(days=days)
+        df = df[df["crash_date"] >= cutoff].copy()
 
-return df
+    return df
+
 
 st.sidebar.title("🚦 Traffic Analytics")
 st.sidebar.caption("Big Data project dashboard")
