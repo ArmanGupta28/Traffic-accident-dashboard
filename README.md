@@ -171,7 +171,7 @@ Actual findings depend on the records returned by the dataset API and the analys
 ## 🌐 Live Demo
 
 **Streamlit Dashboard:**  
-https://arman-traffic-dashboard-2026.streamlit.app/
+https://traffic-dashboard-2026.streamlit.app/
 
 **GitHub Repository:**  
 https://github.com/ArmanGupta28/traffic-accident-dashboard
