@@ -6,6 +6,10 @@ import plotly.express as px
 import requests
 import streamlit as st
 
+import sys
+st.write("Dashboard Python:", sys.executable)
+st.write("Python version:", sys.version)
+
 st.set_page_config(
     page_title="Traffic Accident Analytics",
     page_icon="🚦",
