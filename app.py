@@ -1,4 +1,5 @@
 import os
+import importlib.util
 
 import pandas as pd
 import plotly.express as px
@@ -203,6 +204,113 @@ k1.metric("Accident records", f"{total:,}")
 k2.metric("Persons injured", f"{injured:,}")
 k3.metric("Persons killed", f"{killed:,}")
 k4.metric("Most common hour", f"{peak_hour:02d}:00" if peak_hour is not None else "N/A")
+# Big Data technologies section. The in-dashboard MapReduce example is real
+# Python mapper/reducer logic; Hadoop Streaming runs separately on the user's
+# Windows Hadoop installation. Spark is attempted only when the user clicks
+# the button, so the app remains usable where PySpark is not installed.
+st.markdown("---")
+st.markdown("## Big Data Technologies")
+st.caption("This section separates processing performed by this dashboard from external Hadoop jobs and optional Spark execution.")
+
+tech_map, tech_hadoop, tech_spark = st.tabs(["Python MapReduce", "Hadoop Streaming", "Apache Spark"])
+
+with tech_map:
+    st.markdown("### Mapper → Shuffle & Sort → Reducer")
+    st.write("The mapper emits a key-value pair `(borough, 1)` for every filtered accident record. The reducer sums values for each borough.")
+
+    def map_reduce_borough_counts(values):
+        # Mapper: emit (key, 1). Missing boroughs are grouped as UNKNOWN.
+        mapped = []
+        for value in values:
+            key = str(value).strip().upper() if pd.notna(value) else "UNKNOWN"
+            if not key or key == "NAN":
+                key = "UNKNOWN"
+            mapped.append((key, 1))
+        # Shuffle/sort: group keys together, as Hadoop Streaming does before
+        # invoking the reducer.
+        mapped.sort(key=lambda pair: pair[0])
+        # Reducer: sum counts for each key.
+        reduced = []
+        current_key = None
+        count = 0
+        for key, value in mapped:
+            if key != current_key:
+                if current_key is not None:
+                    reduced.append((current_key, count))
+                current_key, count = key, 0
+            count += value
+        if current_key is not None:
+            reduced.append((current_key, count))
+        return pd.DataFrame(reduced, columns=["Borough", "Accident records"]).sort_values(
+            "Accident records", ascending=False
+        )
+
+    mr_results = map_reduce_borough_counts(filtered["borough"])
+    m1, m2, m3 = st.columns(3)
+    m1.metric("Mapper output pairs", f"{len(filtered):,}")
+    m2.metric("Reducer groups", f"{len(mr_results):,}")
+    m3.metric("Records counted", f"{int(mr_results['Accident records'].sum()):,}")
+    st.dataframe(mr_results, use_container_width=True, hide_index=True)
+    with st.expander("View the mapper and reducer logic"):
+        st.code("""# Mapper: one key-value pair per record
+(borough, 1)
+
+# Shuffle & sort: group all identical borough keys
+
+# Reducer: sum values for each borough
+for borough, count in grouped_records:
+    emit(borough, sum(counts))""", language="python")
+    st.info("This tab executes the MapReduce pattern in Python on the currently filtered dashboard data. It is not itself a Hadoop cluster job.")
+
+with tech_hadoop:
+    st.markdown("### Hadoop Streaming (external job)")
+    st.write("Your Windows Hadoop workflow uses HDFS to store the CSV and Hadoop Streaming to run `mapper.py` and `reducer.py`. The dashboard does not automatically submit jobs to your local Windows Hadoop installation, especially when hosted online.")
+    st.code("""HDFS input:  /traffic/input/traffic_accidents.csv
+Mapper:      mapper.py  -> BOROUGH<TAB>1
+Shuffle:     Hadoop sorts mapper output by key
+Reducer:     reducer.py -> BOROUGH<TAB>TOTAL
+HDFS output: /traffic/output_borough/part-00000""", language="text")
+    st.caption("After the Hadoop job finishes successfully, read its output in CMD with: hdfs dfs -cat /traffic/output_borough/part-00000")
+    st.warning("Hadoop job status is not verified by this dashboard. Only label the Hadoop job as completed in your report after the command finishes successfully and the output file exists.")
+
+with tech_spark:
+    st.markdown("### Apache Spark DataFrame aggregation")
+    st.write("Spark can distribute DataFrame transformations and aggregations. The optional button below tries a local Spark session on the machine running Streamlit; it does not create a multi-node cluster.")
+    if st.button("Run Spark borough aggregation", key="run_spark_aggregation"):
+        if importlib.util.find_spec("pyspark") is None:
+            st.error("PySpark is not installed in this environment. This app has not run Spark here. Install pyspark and configure Java before retrying.")
+        else:
+            spark = None
+            try:
+                from pyspark.sql import SparkSession
+                from pyspark.sql import functions as F
+                spark = (SparkSession.builder
+                         .master("local[*]")
+                         .appName("TrafficAccidentBoroughAnalysis")
+                         .getOrCreate())
+                spark_df = spark.createDataFrame(
+                    filtered[["borough"]].fillna("UNKNOWN").astype(str)
+                )
+                spark_result = (spark_df.groupBy("borough")
+                                .agg(F.count("*").alias("Accident records"))
+                                .orderBy(F.desc("Accident records")))
+                st.success("Spark aggregation completed in local mode.")
+                st.dataframe(spark_result.toPandas().rename(columns={"borough": "Borough"}),
+                             use_container_width=True, hide_index=True)
+            except Exception as exc:
+                st.error("Spark could not start or process the data in this environment.")
+                st.code(str(exc))
+            finally:
+                if spark is not None:
+                    try:
+                        spark.stop()
+                    except Exception:
+                        pass
+    else:
+        st.info("Spark has not been executed in this session yet. Click the button to try it if PySpark and Java are available.")
+    with st.expander("Spark operation used when the button runs"):
+        st.code('spark_df.groupBy("borough")\n    .agg(count("*").alias("Accident records"))\n    .orderBy(desc("Accident records"))', language="python")
+
 
 st.markdown("### Accident patterns")
 left, right = st.columns([1.35, 1])
